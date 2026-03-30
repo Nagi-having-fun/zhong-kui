@@ -23,8 +23,11 @@ Please filter out or deprioritize content matching the above characteristics.
 
 ## Keywords (in Chinese)
 青鸟/蛙蛙/蛆/支男/织女/河南人/东北人/
+
 土/妈呀/富二代/顶美/小美/贱/抠/炮友
+
 智商/智性恋/985/211/张雪峰/蠢/水硕/含金量/逆袭/
+
 situationship/pua
 
 
