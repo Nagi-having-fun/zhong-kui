@@ -1,0 +1,14 @@
+[project]
+name = "preference-selection"
+version = "0.1.0"
+description = "Automatically filter unwanted content on X and Threads"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40",
+    "openai>=1.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+content-filter = "src.main:cli"

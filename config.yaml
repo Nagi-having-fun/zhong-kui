@@ -1,0 +1,20 @@
+platform: "threads"  # "x", "threads", or "both"
+max_actions_per_session: 50
+leave_comment: false
+comment_text: "This content is not relevant to me. Please stop recommending similar posts."
+
+detection:
+  use_llm: true
+  llm_model: "gpt-4o-mini"
+  llm_confidence_threshold: 0.7
+  # API key loaded from .env file (OPENAI_API_KEY)
+
+rate_limiting:
+  min_delay_seconds: 3
+  max_delay_seconds: 8
+  actions_before_pause: 10
+  pause_duration_seconds: 30
+
+logging:
+  level: "INFO"
+  log_to_file: true
