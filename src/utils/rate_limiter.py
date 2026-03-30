@@ -1,6 +1,7 @@
-import asyncio
 import logging
 import random
+
+from .logger import log_sleep
 
 logger = logging.getLogger("content_filter")
 
@@ -17,7 +18,8 @@ class RateLimiter:
         self.action_count += 1
         if self.action_count % self.actions_before_pause == 0:
             delay = self.pause_duration + random.uniform(0, 10)
-            logger.info(f"Pausing for {delay:.1f}s after {self.action_count} actions")
+            logger.info(f"[RATE LIMIT] Extended pause after {self.action_count} actions")
+            await log_sleep(delay, f"extended cooldown (every {self.actions_before_pause} actions)")
         else:
             delay = random.uniform(self.min_delay, self.max_delay)
-        await asyncio.sleep(delay)
+            await log_sleep(delay, f"rate limit delay (action #{self.action_count})")

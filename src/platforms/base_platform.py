@@ -1,12 +1,17 @@
+from __future__ import annotations
+
 import asyncio
 import logging
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import List, Set
 
 from playwright.async_api import Page, Locator
 
 from ..content_detector import ContentDetector
 from ..utils.rate_limiter import RateLimiter
+from ..utils.logger import log_sleep, ActionTracer
 
 logger = logging.getLogger("content_filter")
 
@@ -41,55 +46,86 @@ class BasePlatform(ABC):
     async def leave_comment(self, post: PostElement, message: str): ...
 
     async def scroll_down(self):
-        import random
         distance = random.randint(300, 700)
+        await log_sleep(random.uniform(0.5, 1.0), "pre-scroll pause")
+        logger.info(f"[SCROLL] Scrolling down {distance}px")
         await self.page.evaluate(f"window.scrollBy(0, {distance})")
-        await asyncio.sleep(random.uniform(1.5, 3.5))
+        wait = random.uniform(1.5, 3.5)
+        await log_sleep(wait, "waiting for new posts to load after scroll")
 
     async def run_filter_loop(self, max_actions: int = 50):
-        await self.navigate_to_feed()
+        with ActionTracer("Navigate to feed"):
+            await self.navigate_to_feed()
+
         seen_ids: set[str] = set()
         action_count = 0
+        skip_count = 0
         leave_comment = self.config.get("leave_comment", False)
         comment_text = self.config.get("comment_text", DEFAULT_COMMENT)
 
-        logger.info(f"Starting filter loop (max_actions={max_actions}, dry_run={self.dry_run})")
+        logger.info("=" * 60)
+        logger.info(f"[CONFIG] max_actions={max_actions}, dry_run={self.dry_run}, leave_comment={leave_comment}")
+        logger.info("=" * 60)
 
+        scroll_round = 0
         while action_count < max_actions:
-            posts = await self.get_visible_posts()
-            for post in posts:
+            scroll_round += 1
+            logger.info(f"--- Scroll round #{scroll_round} | actions={action_count}/{max_actions} | seen={len(seen_ids)} | skipped={skip_count} ---")
+
+            with ActionTracer(f"Extracting visible posts (round #{scroll_round})"):
+                posts = await self.get_visible_posts()
+            logger.info(f"[SCAN] Found {len(posts)} visible posts")
+
+            for i, post in enumerate(posts):
                 if post.id in seen_ids:
                     continue
                 seen_ids.add(post.id)
 
-                result = self.detector.check(post.text)
+                preview = post.text[:100].replace("\n", " ")
+                logger.info(f"[POST #{len(seen_ids)}] Analyzing: {preview}")
+
+                with ActionTracer("Content detection"):
+                    result = self.detector.check(post.text)
+
                 if result.matched:
-                    preview = post.text[:80].replace("\n", " ")
                     logger.info(
-                        f"[MATCH] confidence={result.confidence:.2f} reason={result.reason} | {preview}"
+                        f"[MATCH] confidence={result.confidence:.2f} | reason={result.reason}"
                     )
 
                     if self.dry_run:
-                        logger.info("[DRY RUN] Would dismiss this post")
+                        logger.info("[DRY RUN] Would dismiss this post — skipping action")
                         action_count += 1
                         continue
 
+                    logger.info("[RATE LIMIT] Waiting before action...")
                     await self.rate_limiter.wait()
-                    try:
-                        await self.dismiss_post(post)
-                        logger.info("[ACTION] Dismissed post")
-                        action_count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to dismiss post: {e}")
-                        continue
+
+                    with ActionTracer("Dismiss post"):
+                        try:
+                            await self.dismiss_post(post)
+                            action_count += 1
+                            logger.info(f"[ACTION] Post dismissed ({action_count}/{max_actions})")
+                        except Exception as e:
+                            logger.warning(f"[FAIL] Dismiss failed: {e}")
+                            continue
 
                     if leave_comment:
-                        try:
-                            await self.leave_comment(post, comment_text)
-                            logger.info("[ACTION] Left comment")
-                        except Exception as e:
-                            logger.warning(f"Failed to leave comment: {e}")
+                        with ActionTracer("Leave comment"):
+                            try:
+                                await self.leave_comment(post, comment_text)
+                                logger.info(f"[ACTION] Comment posted: {comment_text[:50]}...")
+                            except Exception as e:
+                                logger.warning(f"[FAIL] Comment failed: {e}")
+                else:
+                    skip_count += 1
+                    logger.debug(f"[SKIP] No match (confidence={result.confidence:.2f})")
 
-            await self.scroll_down()
+            with ActionTracer(f"Scroll #{scroll_round}"):
+                await self.scroll_down()
 
-        logger.info(f"Filter loop complete. Actions taken: {action_count}")
+        logger.info("=" * 60)
+        logger.info(f"[SUMMARY] Filter loop complete")
+        logger.info(f"  Actions taken: {action_count}")
+        logger.info(f"  Posts scanned: {len(seen_ids)}")
+        logger.info(f"  Posts skipped: {skip_count}")
+        logger.info("=" * 60)

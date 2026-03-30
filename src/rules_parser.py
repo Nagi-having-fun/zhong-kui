@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict, List
 
 
 @dataclass
@@ -16,7 +19,7 @@ def parse_rules(filepath: str = "unwanted_content.md") -> FilterRules:
     # Strip HTML comments
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
-    sections: dict[str, str] = {}
+    sections: Dict[str, str] = {}
     current_section = None
     lines = text.split("\n")
 
@@ -36,7 +39,8 @@ def parse_rules(filepath: str = "unwanted_content.md") -> FilterRules:
     for key in sections:
         if "keyword" in key:
             raw = sections[key].strip()
-            # Split on "/" and filter empty
+            # Replace newlines with "/" so keywords across lines are split correctly
+            raw = re.sub(r"\s*\n+\s*", "/", raw)
             rules.keywords = [k.strip() for k in raw.split("/") if k.strip()]
             break
 

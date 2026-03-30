@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 from .rules_parser import FilterRules
+from .utils.logger import ActionTracer
 
 logger = logging.getLogger("content_filter")
 
@@ -37,17 +41,22 @@ class ContentDetector:
             return DetectionResult(matched=False, reason="", confidence=0.0)
 
         # Tier 1: keyword scan
+        logger.debug("[DETECT] Running keyword scan")
         hit = self._keyword_scan(text)
         if hit:
+            logger.info(f"[DETECT] Keyword hit: '{hit}'")
             return DetectionResult(matched=True, reason=f"Keyword match: {hit}", confidence=1.0)
 
         # Tier 2: LLM classification
         if self.use_llm and len(text.strip()) > 10 and self._api_key:
-            return self._llm_classify(text)
+            logger.info(f"[DETECT] No keyword match, calling LLM ({self.llm_model})")
+            with ActionTracer(f"LLM classification ({self.llm_model})"):
+                return self._llm_classify(text)
 
+        logger.debug("[DETECT] No keyword match, LLM disabled or text too short")
         return DetectionResult(matched=False, reason="", confidence=0.0)
 
-    def _keyword_scan(self, text: str) -> str | None:
+    def _keyword_scan(self, text: str) -> Optional[str]:
         text_lower = text.lower()
         for kw in self.keywords:
             if kw.lower() in text_lower:
@@ -65,15 +74,18 @@ class ContentDetector:
                 ],
             )
             content = response.choices[0].message.content
+            logger.debug(f"[DETECT] LLM raw response: {content}")
             result = json.loads(content)
             matched = result.get("matched", False) and result.get("confidence", 0) >= self.llm_threshold
-            return DetectionResult(
+            det = DetectionResult(
                 matched=matched,
                 reason=result.get("reason", ""),
                 confidence=result.get("confidence", 0.0),
             )
+            logger.info(f"[DETECT] LLM result: matched={det.matched}, confidence={det.confidence:.2f}, reason={det.reason}")
+            return det
         except Exception as e:
-            logger.warning(f"LLM classification failed: {e}")
+            logger.warning(f"[DETECT] LLM classification failed: {e}")
             return DetectionResult(matched=False, reason="", confidence=0.0)
 
     def _build_system_prompt(self) -> str:
