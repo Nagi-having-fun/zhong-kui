@@ -1,6 +1,16 @@
-# Preference Block
+<p align="center">
+  <img src="assets/logo.png" alt="Preference Block Logo" width="150" />
+</p>
 
-Automatically detect and dismiss unwanted content on Threads (and X/Twitter) using keyword matching and LLM-based classification.
+<h1 align="center">Preference Block</h1>
+
+<p align="center">
+  Automatically detect and dismiss unwanted content on Threads (and X/Twitter) using keyword matching and LLM-based classification.
+</p>
+
+<p align="center">
+  <img src="assets/banner.png" alt="Preference Block Banner" width="800" />
+</p>
 
 ## Features
 
