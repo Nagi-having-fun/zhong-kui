@@ -17,6 +17,8 @@ logger = logging.getLogger("content_filter")
 async def run(args):
     config = load_config("config.yaml", args)
     config["dry_run"] = getattr(args, "dry_run", False)
+    if getattr(args, "block_user", False):
+        config["block_user"] = True
 
     setup_logger(config.get("logging", {}))
 
@@ -72,6 +74,7 @@ def cli():
                         help="Platform to filter (default: from config)")
     parser.add_argument("--login", action="store_true", help="Force re-login")
     parser.add_argument("--dry-run", action="store_true", help="Detect but don't take action")
+    parser.add_argument("--block-user", action="store_true", help="除魔: Block users who post unwanted content")
     parser.add_argument("--max-actions", type=int, default=None, help="Max actions per session")
     args = parser.parse_args()
 

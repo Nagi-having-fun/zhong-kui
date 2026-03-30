@@ -1,5 +1,6 @@
 platform: "threads"  # "x", "threads", or "both"
 max_actions_per_session: 50
+block_user: false     # 除魔：block the user who posted unwanted content
 leave_comment: false
 comment_text: "This content is not relevant to me. Please stop recommending similar posts."
 

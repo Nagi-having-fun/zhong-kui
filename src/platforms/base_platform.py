@@ -43,6 +43,9 @@ class BasePlatform(ABC):
     async def dismiss_post(self, post: PostElement): ...
 
     @abstractmethod
+    async def block_user(self, post: PostElement): ...
+
+    @abstractmethod
     async def leave_comment(self, post: PostElement, message: str): ...
 
     async def scroll_down(self):
@@ -60,11 +63,12 @@ class BasePlatform(ABC):
         seen_ids: set[str] = set()
         action_count = 0
         skip_count = 0
+        block_user_enabled = self.config.get("block_user", False)
         leave_comment = self.config.get("leave_comment", False)
         comment_text = self.config.get("comment_text", DEFAULT_COMMENT)
 
         logger.info("=" * 60)
-        logger.info(f"[CONFIG] max_actions={max_actions}, dry_run={self.dry_run}, leave_comment={leave_comment}")
+        logger.info(f"[CONFIG] max_actions={max_actions}, dry_run={self.dry_run}, block_user={block_user_enabled}, leave_comment={leave_comment}")
         logger.info("=" * 60)
 
         scroll_round = 0
@@ -93,7 +97,9 @@ class BasePlatform(ABC):
                     )
 
                     if self.dry_run:
-                        logger.info("[DRY RUN] Would dismiss this post — skipping action")
+                        logger.info("[DRY RUN] Would dismiss (辟邪) this post")
+                        if block_user_enabled:
+                            logger.info("[DRY RUN] Would block (除魔) this user")
                         action_count += 1
                         continue
 
@@ -108,6 +114,15 @@ class BasePlatform(ABC):
                         except Exception as e:
                             logger.warning(f"[FAIL] Dismiss failed: {e}")
                             continue
+
+                    if block_user_enabled:
+                        with ActionTracer("Block user (除魔)"):
+                            try:
+                                await self.rate_limiter.wait()
+                                await self.block_user(post)
+                                logger.info("[ACTION] User blocked (除魔)")
+                            except Exception as e:
+                                logger.warning(f"[FAIL] Block user failed: {e}")
 
                     if leave_comment:
                         with ActionTracer("Leave comment"):

@@ -68,47 +68,66 @@ class ThreadsPlatform(BasePlatform):
         return posts
 
     async def dismiss_post(self, post: PostElement):
-        logger.info("[DISMISS] Scrolling post into view")
+        """辟邪: Click "Not interested" to dismiss unwanted post."""
+        menu_texts = await self._open_more_menu(post)
+
+        logger.info("[DISMISS] Looking for dismiss option in menu")
+        exact_texts = [
+            "不感兴趣", "不感興趣", "Not interested",
+            "没兴趣", "沒興趣",
+            "不想看", "不关心", "不關心",
+            "隐藏", "隱藏", "Hide",
+        ]
+        fuzzy_keywords = [
+            "兴趣", "興趣", "interested",
+            "不想看", "不关心", "不關心",
+            "隐藏", "隱藏", "hide",
+        ]
+
+        clicked = await self._click_menu_option(exact_texts, fuzzy_keywords, menu_texts, "DISMISS")
+
+        if not clicked:
+            logger.warning("[DISMISS] No dismiss option found in menu, pressing Escape")
+            await self.page.keyboard.press("Escape")
+            raise Exception(f"No dismiss option found. Menu had: {menu_texts}")
+
+        await log_sleep(random.uniform(0.5, 1.5), "waiting for dismiss animation")
+        logger.info("[DISMISS] Post dismissed successfully (辟邪)")
+
+    async def _open_more_menu(self, post: PostElement):
+        """Shared helper: scroll post into view and click the '更多/More' button."""
+        logger.info("[MORE] Scrolling post into view")
         await post.element.scroll_into_view_if_needed()
         await log_sleep(random.uniform(0.3, 0.8), "pause after scrolling post into view")
 
-        # Find and click the "..." more menu button (three dots)
-        logger.info("[DISMISS] Looking for 'More' / '更多' button")
+        logger.info("[MORE] Looking for 'More' / '更多' button")
         more_button = None
 
-        # Try aria-label variations (Chinese + English)
         for label in ["更多", "More", "更多選項", "更多选项"]:
             btn = post.element.get_by_role("button", name=label)
             if await btn.count() > 0:
                 more_button = btn.first
-                logger.info(f"[DISMISS] Found button by role name='{label}'")
+                logger.info(f"[MORE] Found button by role name='{label}'")
                 break
 
         if more_button is None:
-            # Fallback: find the "..." button by looking for the three-dot SVG icon
-            # The more button typically contains a circle-based SVG (three dots)
-            # It's usually the FIRST small icon button (not like/reply/repost/share)
-            logger.info("[DISMISS] Trying aria-label contains 'more' fallback")
+            logger.info("[MORE] Trying aria-label contains 'more' fallback")
             btn = post.element.locator('[aria-label*="更多"], [aria-label*="more" i], [aria-label*="More"]')
             if await btn.count() > 0:
                 more_button = btn.first
-                logger.info("[DISMISS] Found button by aria-label contains 'more'")
+                logger.info("[MORE] Found button by aria-label contains 'more'")
 
         if more_button is None:
-            # Last resort: use JS to find the three-dot menu button
-            # On Threads, the "..." button is typically near the timestamp at top-right of post
-            logger.info("[DISMISS] Trying JS-based detection for three-dot button")
+            logger.info("[MORE] Trying JS-based detection for three-dot button")
             found = await self.page.evaluate("""
                 (postText) => {
                     const articles = document.querySelectorAll('[data-pressable-container="true"]');
                     for (const article of articles) {
                         if (!article.textContent.includes(postText.substring(0, 30))) continue;
-                        // Find all buttons with SVG inside
                         const buttons = article.querySelectorAll('div[role="button"]');
                         for (const btn of buttons) {
                             const svg = btn.querySelector('svg');
                             if (!svg) continue;
-                            // The three-dot icon typically has circles (not paths for like/share)
                             const circles = svg.querySelectorAll('circle');
                             if (circles.length >= 3) {
                                 btn.setAttribute('data-cf-more-btn', 'true');
@@ -121,21 +140,20 @@ class ThreadsPlatform(BasePlatform):
             """, post.text)
             if found:
                 more_button = post.element.locator('[data-cf-more-btn="true"]').first
-                logger.info("[DISMISS] Found three-dot button via SVG circle detection")
+                logger.info("[MORE] Found three-dot button via SVG circle detection")
 
         if more_button is None:
             raise Exception("Could not find 'More' (三个点) button on this post")
 
-        logger.info("[DISMISS] Clicking 'More' button")
+        logger.info("[MORE] Clicking 'More' button")
         await more_button.click()
         await log_sleep(random.uniform(0.5, 1.0), "waiting for menu to appear")
 
-        # Dump all visible menu text for debugging
-        await asyncio.sleep(0.5)  # extra wait for menu render
+        # Dump menu texts for debugging
+        await asyncio.sleep(0.5)
         menu_texts = await self.page.evaluate("""
             () => {
                 const items = [];
-                // Look for visible elements that could be menu items
                 const allEls = document.querySelectorAll('div[role="dialog"] *, div[role="menu"] *, div[role="listbox"] *, div[role="button"], span');
                 for (const el of allEls) {
                     const rect = el.getBoundingClientRect();
@@ -147,56 +165,73 @@ class ThreadsPlatform(BasePlatform):
                 return items.slice(0, 30);
             }
         """)
-        logger.info(f"[DISMISS] Visible menu texts: {menu_texts}")
+        logger.info(f"[MORE] Visible menu texts: {menu_texts}")
+        return menu_texts
 
-        # Click dismiss option from the popup menu (supports both Chinese and English UI)
-        logger.info("[DISMISS] Looking for dismiss option in menu")
-        # Exact matches first (high confidence)
-        exact_texts = [
-            "不感兴趣", "不感興趣", "Not interested",
-            "没兴趣", "沒興趣",
-            "不想看", "不关心", "不關心",
-            "隐藏", "隱藏", "Hide",
-        ]
-        # Fuzzy keywords (substring match against menu items)
-        fuzzy_keywords = [
-            "兴趣", "興趣", "interested",
-            "不想看", "不关心", "不關心",
-            "隐藏", "隱藏", "hide",
-        ]
-
-        clicked = False
-
+    async def _click_menu_option(self, exact_texts: list, fuzzy_keywords: list, menu_texts: list, action_name: str) -> bool:
+        """Shared helper: find and click a menu option with exact + fuzzy matching."""
         # Phase 1: exact match on visible elements
         for text in exact_texts:
             btn = self.page.locator(f'text="{text}" >> visible=true')
             if await btn.count() > 0:
-                logger.info(f"[DISMISS] Exact match: clicking '{text}'")
+                logger.info(f"[{action_name}] Exact match: clicking '{text}'")
                 await btn.first.click()
-                clicked = True
-                break
+                return True
 
         # Phase 2: fuzzy match against dumped menu texts
-        if not clicked and menu_texts:
+        if menu_texts:
             for menu_item in menu_texts:
                 for kw in fuzzy_keywords:
                     if kw in menu_item:
-                        logger.info(f"[DISMISS] Fuzzy match: '{kw}' found in '{menu_item}'")
+                        logger.info(f"[{action_name}] Fuzzy match: '{kw}' found in '{menu_item}'")
                         btn = self.page.locator(f'text="{menu_item}" >> visible=true')
                         if await btn.count() > 0:
                             await btn.first.click()
-                            clicked = True
-                            break
-                if clicked:
-                    break
+                            return True
+
+        return False
+
+    async def block_user(self, post: PostElement):
+        """除魔: Block the user who posted unwanted content."""
+        menu_texts = await self._open_more_menu(post)
+
+        logger.info("[BLOCK] Looking for block/mute option in menu")
+        exact_texts = [
+            "屏蔽", "封鎖", "封锁", "Block",
+            "拉黑", "拉黑该用户",
+            "静音", "靜音", "Mute",
+            "屏蔽用户", "屏蔽此用户",
+        ]
+        fuzzy_keywords = [
+            "屏蔽", "封鎖", "封锁", "block", "Block",
+            "拉黑",
+            "静音", "靜音", "mute", "Mute",
+        ]
+
+        clicked = await self._click_menu_option(exact_texts, fuzzy_keywords, menu_texts, "BLOCK")
 
         if not clicked:
-            logger.warning("[DISMISS] No dismiss option found in menu, pressing Escape")
+            logger.warning(f"[BLOCK] No block/mute option found in menu, pressing Escape")
             await self.page.keyboard.press("Escape")
-            raise Exception(f"No dismiss option found. Menu had: {menu_texts}")
+            raise Exception(f"No block/mute option found. Menu had: {menu_texts}")
 
-        await log_sleep(random.uniform(0.5, 1.5), "waiting for dismiss animation")
-        logger.info("[DISMISS] Post dismissed successfully")
+        await log_sleep(random.uniform(0.5, 1.5), "waiting for block confirmation")
+
+        # Handle confirmation dialog if one appears
+        confirm_texts = [
+            "屏蔽", "封鎖", "封锁", "Block",
+            "确认", "確認", "Confirm",
+            "确定", "確定",
+        ]
+        for text in confirm_texts:
+            btn = self.page.locator(f'text="{text}" >> visible=true')
+            if await btn.count() > 0:
+                logger.info(f"[BLOCK] Confirming block: clicking '{text}'")
+                await btn.first.click()
+                await log_sleep(random.uniform(0.5, 1.0), "waiting for block to complete")
+                break
+
+        logger.info("[BLOCK] User blocked successfully (除魔)")
 
     async def leave_comment(self, post: PostElement, message: str):
         logger.info("[COMMENT] Scrolling post into view")
